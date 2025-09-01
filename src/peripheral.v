@@ -35,7 +35,7 @@ module tqvp_adder (
     reg [31:0] ctrl;
     always @(posedge clk) begin
         if (!rst_n) begin
-            example_data <= 0;
+            ctrl <= 0;
         end else begin
             if (address == 6'h0 ) begin
                 if (data_write_n != 2'b11)              ctrl[7:0]   <= data_in[7:0];
