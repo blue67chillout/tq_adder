@@ -8,7 +8,7 @@
 // Change the name of this module to something that reflects its functionality and includes your name for uniqueness
 // For example tqvp_yourname_spi for an SPI peripheral.
 // Then edit tt_wrapper.v line 41 and change tqvp_example to your chosen module name.
-module tqvp_example (
+module tqvp_adder (
     input         clk,          // Clock - the TinyQV project clock is normally set to 64MHz.
     input         rst_n,        // Reset_n - low to reset.
 
@@ -37,7 +37,7 @@ module tqvp_example (
         if (!rst_n) begin
             example_data <= 0;
         end else begin
-            if (address == 6'h0) begin
+            if (address == 6'h0 ) begin
                 if (data_write_n != 2'b11)              example_data[7:0]   <= data_in[7:0];
                 if (data_write_n[1] != data_write_n[0]) example_data[15:8]  <= data_in[15:8];
                 if (data_write_n == 2'b10)              example_data[31:16] <= data_in[31:16];
@@ -48,11 +48,18 @@ module tqvp_example (
     // The bottom 8 bits of the stored data are added to ui_in and output to uo_out.
     assign uo_out = example_data[7:0] + ui_in;
 
+    reg [16:0] result ;
+
+    always @ (posedge clk) begin
+        result = example_data[15:0] + example_data[31:16] ;
+
+    end
+
     // Address 0 reads the example data register.  
     // Address 4 reads ui_in
     // All other addresses read 0.
     assign data_out = (address == 6'h0) ? example_data :
-                      (address == 6'h4) ? {24'h0, ui_in} :
+        (address == 6'h4) ? {15'h0,result } :
                       32'h0;
 
     // All reads complete in 1 clock
