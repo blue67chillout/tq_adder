@@ -44,8 +44,6 @@ module bg (
     wire [9:0] mound_x = (temp_x >= H_RES) ? (temp_x - H_RES) : temp_x;
     wire in_mound_region = (mound_x < MOUND_W);
     
-    // --- FIX IS HERE ---
-    // Verilog-1995 requires assigning to a wire before bit-selecting from an expression.
     wire [9:0] inverted_mound_x = MOUND_W-1 - mound_x;
     wire [5:0] mound_index = (mound_x < HALF_MOUND_W) ? mound_x[5:0] : inverted_mound_x[5:0];
     
@@ -55,18 +53,29 @@ module bg (
                                   : GROUND_Y;
     wire is_ground_line = (pix_y == ground_y_for_x[9:0]);
 
-    // //------------------- Ground Dots, Scrolling ------------------------
+    //------------------- Ground Dots, Scrolling ------------------------
     wire [10:0] scroll_x = pix_x + scroll_counter;
-    wire [3:0] mod8  = (scroll_x>=16) ? (scroll_x-16)[3:0] : (scroll_x>=8) ? (scroll_x-8)[3:0] : scroll_x[3:0];
-    wire [3:0] mod11 = (scroll_x>=22) ? (scroll_x-22)[3:0] : (scroll_x>=11) ? (scroll_x-11)[3:0] : scroll_x[3:0];
-    wire [4:0] mod17 = (scroll_x>=34) ? (scroll_x-34)[4:0] : (scroll_x>=17) ? (scroll_x-17)[4:0] : scroll_x[4:0];
+    
+    // --- FIX START: Create intermediate wires for all mod calculations ---
+    wire [10:0] mod8_sub16  = scroll_x - 16;
+    wire [10:0] mod8_sub8   = scroll_x - 8;
+    wire [10:0] mod11_sub22 = scroll_x - 22;
+    wire [10:0] mod11_sub11 = scroll_x - 11;
+    wire [10:0] mod17_sub34 = scroll_x - 34;
+    wire [10:0] mod17_sub17 = scroll_x - 17;
+    
+    wire [3:0] mod8  = (scroll_x>=16) ? mod8_sub16[3:0]  : (scroll_x>=8) ? mod8_sub8[3:0]   : scroll_x[3:0];
+    wire [3:0] mod11 = (scroll_x>=22) ? mod11_sub22[3:0] : (scroll_x>=11)? mod11_sub11[3:0] : scroll_x[3:0];
+    wire [4:0] mod17 = (scroll_x>=34) ? mod17_sub34[4:0] : (scroll_x>=17)? mod17_sub17[4:0] : scroll_x[4:0];
+    // --- FIX END ---
+    
     wire is_ground_dot =
          (pix_y > ground_y_for_x) && (pix_y <= ground_y_for_x + 8) &&
          ((mod8  == 2 && pix_y == ground_y_for_x+3)  ||
           (mod11 == 4 && pix_y == ground_y_for_x+5)  ||
           (mod17 == 9 && pix_y == ground_y_for_x+7));
 
-    // //----------------------------- Clouds ------------------------------
+    //----------------------------- Clouds ------------------------------
     localparam CLOUD_W = 20, CLOUD_H = 8, CLOUD_SCALE = 2;
 
     function [CLOUD_W-1:0] get_cloud_sprite_line;
@@ -86,10 +95,16 @@ module bg (
         end
     endfunction
 
+    // --- FIX START: Create intermediate wires for cloud coordinate calculations ---
     wire [10:0] temp_c1_x = 140 + H_RES - (scroll_counter >> 1);
-    wire [9:0]  c1_x = (temp_c1_x >= H_RES) ? (temp_c1_x - H_RES)[9:0] : temp_c1_x[9:0];
+    wire [10:0] c1_sub_hres = temp_c1_x - H_RES;
+    wire [9:0]  c1_x = (temp_c1_x >= H_RES) ? c1_sub_hres[9:0] : temp_c1_x[9:0];
+    
     wire [10:0] temp_c2_x = 340 + H_RES - (scroll_counter >> 1);
-    wire [9:0]  c2_x = (temp_c2_x >= H_RES) ? (temp_c2_x - H_RES)[9:0] : temp_c2_x[9:0];
+    wire [10:0] c2_sub_hres = temp_c2_x - H_RES;
+    wire [9:0]  c2_x = (temp_c2_x >= H_RES) ? c2_sub_hres[9:0] : temp_c2_x[9:0];
+    // --- FIX END ---
+
     localparam C1_Y = GROUND_Y - 156;
     localparam C2_Y = GROUND_Y - 136;
 
@@ -103,10 +118,17 @@ module bg (
     wire [9:0] c2_local_x = pix_x - c2_x;
     wire [9:0] c2_local_y = pix_y - C2_Y;
 
-    wire [4:0] c1_sprite_x = (c1_local_x >> 1)[4:0]; // CLOUD_SCALE = 2
-    wire [2:0] c1_sprite_y = (c1_local_y >> 1)[2:0];
-    wire [4:0] c2_sprite_x = (c2_local_x >> 1)[4:0];
-    wire [2:0] c2_sprite_y = (c2_local_y >> 1)[2:0];
+    // --- FIX START: Create intermediate wires for cloud sprite indexing ---
+    wire [9:0] c1_local_x_shifted = c1_local_x >> 1;
+    wire [9:0] c1_local_y_shifted = c1_local_y >> 1;
+    wire [9:0] c2_local_x_shifted = c2_local_x >> 1;
+    wire [9:0] c2_local_y_shifted = c2_local_y >> 1;
+
+    wire [4:0] c1_sprite_x = c1_local_x_shifted[4:0]; // CLOUD_SCALE = 2
+    wire [2:0] c1_sprite_y = c1_local_y_shifted[2:0];
+    wire [4:0] c2_sprite_x = c2_local_x_shifted[4:0];
+    wire [2:0] c2_sprite_y = c2_local_y_shifted[2:0];
+    // --- FIX END ---
 
     wire [CLOUD_W-1:0] cloud_sprite_line = get_cloud_sprite_line(c1_sprite_y);
     wire [CLOUD_W-1:0] cloud_sprite_line2 = get_cloud_sprite_line(c2_sprite_y);
