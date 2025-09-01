@@ -68,7 +68,6 @@ module tqvp_adder (
     );
     
 
-wire [1:0] R, G, B;
     bg background (
         .clk(clk),
         .rst_n(rst_n),
