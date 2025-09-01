@@ -38,9 +38,9 @@ module tqvp_adder (
             example_data <= 0;
         end else begin
             if (address == 6'h0 ) begin
-                if (data_write_n != 2'b11)              example_data[7:0]   <= data_in[7:0];
-                if (data_write_n[1] != data_write_n[0]) example_data[15:8]  <= data_in[15:8];
-                if (data_write_n == 2'b10)              example_data[31:16] <= data_in[31:16];
+                if (data_write_n != 2'b11)              ctrl[7:0]   <= data_in[7:0];
+                if (data_write_n[1] != data_write_n[0]) ctrl[15:8]  <= data_in[15:8];
+                if (data_write_n == 2'b10)              ctrl[31:16] <= data_in[31:16];
             end
         end
     end
@@ -54,7 +54,7 @@ module tqvp_adder (
     
     wire [1:0]R,G,B ;
 
-    wire start = example_data[0] ;
+    wire start = ctrl[0] ;
     
     video_controller u_video_controller(
         .clk      	(clk       ),
@@ -86,7 +86,7 @@ wire [1:0] R, G, B;
     // Address 0 reads the example data register.  
     // Address 4 reads ui_in
     // All other addresses read 0.
-    assign data_out = (address == 6'h0) ? example_data :
+    assign data_out = (address == 6'h0) ? ctrl :
         (address == 6'h4) ? {22'h0,pix_x } :
         (address == 6'h8) ? {22'h0,pix_y } :
         (address == 6'hc) ? {24'h0,uo_out} :
