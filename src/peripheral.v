@@ -32,7 +32,7 @@ module tqvp_adder (
 );
 
     // Implement a 32-bit read/write register at address 0
-    reg [31:0] example_data;
+    reg [31:0] ctrl;
     always @(posedge clk) begin
         if (!rst_n) begin
             example_data <= 0;
@@ -46,21 +46,53 @@ module tqvp_adder (
     end
 
     // The bottom 8 bits of the stored data are added to ui_in and output to uo_out.
-    assign uo_out = example_data[7:0] + ui_in;
+    reg hsync;
+    reg vsync;
+    wire visible;
+    reg [9:0] pix_x;
+    reg [9:0] pix_y;
+    
+    wire [1:0]R,G,B ;
 
-    reg [16:0] result ;
+    wire start = example_data[0] ;
+    
+    video_controller u_video_controller(
+        .clk      	(clk       ),
+        .reset    	(rst_n     ),
+        .polarity 	(1'b1      ), // 0 = negative polarity (VGA, SVGA), 1 = positive polarity (XGA, SXGA)
+        .hsync    	(hsync     ),
+        .vsync    	(vsync     ),
+        .visible  	(visible   ),
+        .pix_x    	(pix_x     ),
+        .pix_y    	(pix_y     )
+    );
+    
 
-    always @ (posedge clk) begin
-        result <= example_data[15:0] + example_data[31:16] ;
+wire [1:0] R, G, B;
+    bg background (
+        .clk(clk),
+        .rst_n(rst_n),
+        .video_active(visible),
+        .pix_x(pix_x),
+        .pix_y(pix_y),
+        .vsync(vsync),
+        .R(R),
+        .G(G),
+        .B(B),
+        .start      (start     )
+    );
 
-    end
 
     // Address 0 reads the example data register.  
     // Address 4 reads ui_in
     // All other addresses read 0.
     assign data_out = (address == 6'h0) ? example_data :
-        (address == 6'h4) ? {15'h0,result } :
+        (address == 6'h4) ? {22'h0,pix_x } :
+        (address == 6'h8) ? {22'h0,pix_y } :
+        (address == 6'hc) ? {24'h0,uo_out} :
                       32'h0;
+
+    assign uo_out = {vsync, hsync, B, G, R}; 
 
     // All reads complete in 1 clock
     assign data_ready = 1;
