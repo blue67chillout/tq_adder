@@ -51,7 +51,7 @@ module tqvp_adder (
     reg [16:0] result ;
 
     always @ (posedge clk) begin
-        result = example_data[15:0] + example_data[31:16] ;
+        result <= example_data[15:0] + example_data[31:16] ;
 
     end
 
