@@ -19,6 +19,8 @@ project:
   source_files:
     - "peripheral.v"
     - "tt_wrapper.v"
+    - "video_controller.v"
+    - "bg.v"
     - "test_harness/falling_edge_detector.sv"
     - "test_harness/rising_edge_detector.sv"
     - "test_harness/reclocking.sv"
