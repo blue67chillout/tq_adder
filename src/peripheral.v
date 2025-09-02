@@ -5,84 +5,74 @@
 
 `default_nettype none
 
-// Change the name of this module to something that reflects its functionality and includes your name for uniqueness
-// For example tqvp_yourname_spi for an SPI peripheral.
-// Then edit tt_wrapper.v line 41 and change tqvp_example to your chosen module name.
 module tqvp_adder (
-    input         clk,          // Clock - the TinyQV project clock is normally set to 64MHz.
-    input         rst_n,        // Reset_n - low to reset.
+    input  wire       clk,            // Clock - the TinyQV project clock is normally set to 64MHz.
+    input  wire       rst_n,          // Reset_n - low to reset.
 
-    input  [7:0]  ui_in,        // The input PMOD, always available.  Note that ui_in[7] is normally used for UART RX.
-                                // The inputs are synchronized to the clock, note this will introduce 2 cycles of delay on the inputs.
+    input  wire [7:0] ui_in,          // The input PMOD
+    output wire [7:0] uo_out,         // The output PMOD
 
-    output [7:0]  uo_out,       // The output PMOD.  Each wire is only connected if this peripheral is selected.
-                                // Note that uo_out[0] is normally used for UART TX.
+    input  wire [5:0] address,        // Address within this peripheral's address space
+    input  wire [31:0] data_in,        // Data in to the peripheral
 
-    input [5:0]   address,      // Address within this peripheral's address space
-    input [31:0]  data_in,      // Data in to the peripheral, bottom 8, 16 or all 32 bits are valid on write.
-
-    // Data read and write requests from the TinyQV core.
-    input [1:0]   data_write_n, // 11 = no write, 00 = 8-bits, 01 = 16-bits, 10 = 32-bits
-    input [1:0]   data_read_n,  // 11 = no read,  00 = 8-bits, 01 = 16-bits, 10 = 32-bits
+    input  wire [1:0] data_write_n,   // 11 = no write, 00 = 8-bits, 01 = 16-bits, 10 = 32-bits
+    input  wire [1:0] data_read_n,    // 11 = no read,  00 = 8-bits, 01 = 16-bits, 10 = 32-bits
     
-    output [31:0] data_out,     // Data out from the peripheral, bottom 8, 16 or all 32 bits are valid on read when data_ready is high.
-    output        data_ready,
-
-    output        user_interrupt  // Dedicated interrupt request for this peripheral
+    output reg [31:0] data_out,       // Data out from the peripheral
+    output reg        data_ready,
+    output reg        user_interrupt  // Dedicated interrupt request for this peripheral
 );
 
-    // Implement a 32-bit read/write register at address 0
-    // reg [31:0] ctrl;
-    // always @(posedge clk) begin
-    //     if (!rst_n) begin
-    //         ctrl <= 0;
-    //     end else begin
-    //         if (address == 6'h0 ) begin
-    //             if (data_write_n != 2'b11)              ctrl[7:0]   <= data_in[7:0];
-    //             if (data_write_n[1] != data_write_n[0]) ctrl[15:8]  <= data_in[15:8];
-    //             if (data_write_n == 2'b10)              ctrl[31:16] <= data_in[31:16];
-    //         end
-    //     end
-    // end
+    // --- Signal Declarations ---
+    reg  [31:0] ctrl;
+    reg         hsync;
+    reg         vsync;
+    wire        visible;
+    reg  [9:0]  pix_x;
+    reg  [9:0]  pix_y;
+    wire [1:0]  R,G,B;
+    wire        sprite_pixel_on;
+    wire        start = ctrl[0]; // Example: Use bit 0 of ctrl register to start the animation
 
-    // The bottom 8 bits of the stored data are added to ui_in and output to uo_out.
-    
-    reg hsync;
-    reg vsync;
-    wire visible;
-    reg [9:0] pix_x;
-    reg [9:0] pix_y;
-    
-    wire [1:0] R,G,B ;
-
-    //wire start = ctrl[0] ;
-    parameter MAX_SPRITES = 2 ;
+    // --- Sprite Engine Parameters ---
+    parameter MAX_SPRITES = 2;
     localparam OBJ_BYTES     = 4;
-    localparam OBJ_REGION_SZ = OBJ_BYTES * MAX_SPRITES; // bytes used for object table
-    localparam BITMAP_BASE   = OBJ_REGION_SZ;           // start address for bitmap storage (auto-adjusted)
-    localparam BITMAP_BYTES  = 63 - OBJ_REGION_SZ;      // remaining bytes up to CONTROL_ADDR
-    localparam CONTROL_ADDR  = 63;                      // last byte reserved for control/status
+    localparam OBJ_REGION_SZ = OBJ_BYTES * MAX_SPRITES;
+    localparam BITMAP_BASE   = OBJ_REGION_SZ;
+    localparam BITMAP_BYTES  = 63 - OBJ_REGION_SZ;
+    localparam CONTROL_ADDR  = 63;
 
-    // --- internal memories ---
-    reg [7:0] active_obj_ram  [0:OBJ_REGION_SZ - 1]; 
-    reg [7:0] stage_obj_ram   [0:OBJ_REGION_SZ - 1]; 
-    reg [7:0] bitmap_ram      [0:BITMAP_BYTES - 1]; // packed 1bpp bitmaps; host writes here only when enabled
-
-    // --- control register bits (in CONTROL_ADDR) ---
-    // bit0 = BITMAP_WRITE_EN  : when 1, host may write bitmap region
-    // bit1 = STAGING_READY    : host writes 1 to indicate staging table is ready
-    // bit2 = (reserved)
+    // --- Memories and Control ---
+    reg [7:0] active_obj_ram [0:OBJ_REGION_SZ - 1];
+    reg [7:0] stage_obj_ram  [0:OBJ_REGION_SZ - 1];
+    reg [7:0] bitmap_ram     [0:BITMAP_BYTES - 1];
     reg [7:0] control_reg;
 
-    // --- host read/write interface ---
-    // Writes go to:
-    //  - addresses < OBJ_REGION_SZ => stage_obj_ram (staging update)
-    //  - BITMAP_BASE.. => bitmap_ram (only when BITMAP_WRITE_EN set)
-    //  - CONTROL_ADDR => control_reg (byte writes only)
+    // --- Rendering Logic Variables ---
+    // FIX: Moved variable declarations outside of the always block.
+    integer   spr_idx;
+    reg       pix_hit;
+    reg [7:0] x, y, bitmap_offset, size_byte;
+    reg [3:0] width, height;
+    reg [3:0] spr_x, spr_y;
+    integer   bit_offset;
+    integer   byte_addr;
+    integer   bit_in_byte;
+    reg [7:0] bmp_byte;
+    reg       bmp_bit;
+
+
+    // --- Host Write Interface ---
     integer i;
     always @(posedge clk) begin
+        // FIX: Added temporary variables for Verilog-1995 compatibility
+        reg [5:0] addr_p1, addr_p2, addr_p3;
+        addr_p1 = address + 1;
+        addr_p2 = address + 2;
+        addr_p3 = address + 3;
+
         if (!rst_n) begin
-            // reset memories & control
+            ctrl <= 32'b0;
             for (i = 0; i < OBJ_REGION_SZ; i = i + 1) begin
                 active_obj_ram[i] <= 8'b0;
                 stage_obj_ram[i]  <= 8'b0;
@@ -92,41 +82,37 @@ module tqvp_adder (
             end
             control_reg <= 8'b0;
         end else begin
-            // Host writes (synchronous)
             if (data_write_n != 2'b11) begin
-                // compute write width and perform writes (byte/half/word) at address
-                // only perform writes if address and region valid and allowed by control_reg
-                if (data_write_n == 2'b00) begin
-                    // byte write
+                // --- Handle writes to different memory regions ---
+                if (address == 6'h0) begin // Write to ctrl register
+                    if (data_write_n != 2'b11)         ctrl[7:0]   <= data_in[7:0];
+                    if (data_write_n[1] != data_write_n[0]) ctrl[15:8]  <= data_in[15:8];
+                    if (data_write_n == 2'b10)         ctrl[31:16] <= data_in[31:16];
+                end else if (data_write_n == 2'b00) begin // Byte write
                     if (address < OBJ_REGION_SZ) begin
-                        stage_obj_ram[address[5:0]] <= data_in[7:0];
+                        stage_obj_ram[address] <= data_in[7:0];
                     end else if ((address >= BITMAP_BASE) && (address < BITMAP_BASE + BITMAP_BYTES)) begin
-                        if (control_reg[0]) // BITMAP_WRITE_EN
+                        if (control_reg[0])
                             bitmap_ram[address - BITMAP_BASE] <= data_in[7:0];
                     end else if (address == CONTROL_ADDR) begin
                         control_reg <= data_in[7:0];
                     end
-                end else if (data_write_n == 2'b01) begin
-                    // halfword (16-bit) write - address must be <= 62
+                end else if (data_write_n == 2'b01) begin // Halfword write
                     if ((address + 1) < OBJ_REGION_SZ) begin
-                        stage_obj_ram[address[5:0]]   <= data_in[7:0];
-                        stage_obj_ram[(address+1)[5:0]] <= data_in[15:8];
+                        stage_obj_ram[address]   <= data_in[7:0];
+                        stage_obj_ram[addr_p1] <= data_in[15:8];
                     end else if ((address >= BITMAP_BASE) && ((address + 1) < BITMAP_BASE + BITMAP_BYTES)) begin
                         if (control_reg[0]) begin
                             bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
                             bitmap_ram[address+1 - BITMAP_BASE] <= data_in[15:8];
                         end
-                    end else if (address == CONTROL_ADDR - 1) begin
-                        // allow halfword write that ends at CONTROL_ADDR
-                        control_reg <= data_in[15:8];
                     end
-                end else if (data_write_n == 2'b10) begin
-                    // word (32-bit) write - address must be <= 60
+                end else if (data_write_n == 2'b10) begin // Word write
                     if ((address + 3) < OBJ_REGION_SZ) begin
-                        stage_obj_ram[address[5:0]]   <= data_in[7:0];
-                        stage_obj_ram[(address+1)[5:0]] <= data_in[15:8];
-                        stage_obj_ram[(address+2)[5:0]] <= data_in[23:16];
-                        stage_obj_ram[(address+3)[5:0]] <= data_in[31:24];
+                        stage_obj_ram[address]   <= data_in[7:0];
+                        stage_obj_ram[addr_p1] <= data_in[15:8];
+                        stage_obj_ram[addr_p2] <= data_in[23:16];
+                        stage_obj_ram[addr_p3] <= data_in[31:24];
                     end else if ((address >= BITMAP_BASE) && ((address + 3) < BITMAP_BASE + BITMAP_BYTES)) begin
                         if (control_reg[0]) begin
                             bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
@@ -134,85 +120,72 @@ module tqvp_adder (
                             bitmap_ram[address+2 - BITMAP_BASE] <= data_in[23:16];
                             bitmap_ram[address+3 - BITMAP_BASE] <= data_in[31:24];
                         end
-                    end else if (address == CONTROL_ADDR - 3) begin
-                        control_reg <= data_in[31:24];
                     end
                 end
             end
-            // Note: we keep reading/writing staging only. Active table is swapped later at vsync.
         end
     end
 
-reg [1:0] data_read_n_reg;
-reg [5:0] address_reg;
+    // --- Host Read Interface ---
+    // FIX: Merged all read logic into a single clocked block to avoid multiple drivers.
+    always @(posedge clk) begin
+        // FIX: Added temporary variables for Verilog-1995 compatibility
+        reg [5:0] addr_p1, addr_p2, addr_p3;
+        addr_p1 = address + 1;
+        addr_p2 = address + 2;
+        addr_p3 = address + 3;
 
-always @(posedge clk ) begin
-    if (!rst_n) begin
-        data_ready <= 1'b0;
-        data_out   <= 32'b0;
-        data_read_n_reg <= 2'b11;
-        address_reg     <= 6'b0;
-    end else begin
-        // Latch the read request
-        data_read_n_reg <= data_read_n;
-        address_reg     <= address;
-
-        data_ready <= (data_read_n_reg != 2'b11);
-        data_out   <= 32'b0;
-        if (data_read_n_reg != 2'b11) begin
-            if (data_read_n_reg == 2'b00) begin
-                // byte read
-                if (address_reg < OBJ_REGION_SZ) data_out[7:0] <= active_obj_ram[address_reg[5:0]];
-                else if ((address_reg >= BITMAP_BASE) && (address_reg < BITMAP_BASE + BITMAP_BYTES))
-                    data_out[7:0] <= bitmap_ram[address_reg - BITMAP_BASE];
-                else if (address_reg == CONTROL_ADDR) data_out[7:0] <= control_reg;
-            end else if (data_read_n_reg == 2'b01) begin
-                // halfword
-                if ((address_reg + 1) < OBJ_REGION_SZ) begin
-                    data_out[15:0] <= { active_obj_ram[(address_reg+1)[5:0]], active_obj_ram[address_reg[5:0]] };
-                end else if ((address_reg >= BITMAP_BASE) && ((address_reg + 1) < BITMAP_BASE + BITMAP_BYTES)) begin
-                    data_out[15:0] <= { bitmap_ram[address_reg+1 - BITMAP_BASE], bitmap_ram[address_reg - BITMAP_BASE] };
-                end else if (address_reg == CONTROL_ADDR - 1) begin
-                    data_out[15:0] <= { 8'b0, control_reg };
-                end
-            end else if (data_read_n_reg == 2'b10) begin
-                // word
-                if ((address_reg + 3) < OBJ_REGION_SZ) begin
-                    data_out[31:0] <= { active_obj_ram[(address_reg+3)[5:0]], active_obj_ram[(address_reg+2)[5:0]],
-                                        active_obj_ram[(address_reg+1)[5:0]], active_obj_ram[address_reg[5:0]] };
-                end else if ((address_reg >= BITMAP_BASE) && ((address_reg + 3) < BITMAP_BASE + BITMAP_BYTES)) begin
-                    data_out[31:0] <= { bitmap_ram[address_reg+3 - BITMAP_BASE], bitmap_ram[address_reg+2 - BITMAP_BASE],
-                                        bitmap_ram[address_reg+1 - BITMAP_BASE], bitmap_ram[address_reg - BITMAP_BASE] };
-                end else if (address_reg == CONTROL_ADDR - 3) begin
-                    data_out[31:0] <= { 24'b0, control_reg };
-                end
+        if (!rst_n) begin
+            data_ready <= 1'b0;
+            data_out   <= 32'b0;
+        end else begin
+            data_ready <= (data_read_n != 2'b11); // Read is ready in 1 cycle
+            if (data_read_n != 2'b11) begin
+                case(data_read_n)
+                    2'b00: begin // Byte read
+                        if (address < OBJ_REGION_SZ) data_out <= {24'b0, active_obj_ram[address]};
+                        else if ((address >= BITMAP_BASE) && (address < BITMAP_BASE + BITMAP_BYTES)) data_out <= {24'b0, bitmap_ram[address - BITMAP_BASE]};
+                        else if (address == CONTROL_ADDR) data_out <= {24'b0, control_reg};
+                        else if (address == 6'h0) data_out <= {24'b0, ctrl[7:0]};
+                        else if (address == 6'h4) data_out <= {22'b0, pix_x};
+                        else if (address == 6'h8) data_out <= {22'b0, pix_y};
+                        else data_out <= 32'h0;
+                    end
+                    2'b01: begin // Halfword read
+                        if ((address + 1) < OBJ_REGION_SZ) data_out[15:0] <= { active_obj_ram[addr_p1], active_obj_ram[address] };
+                        else if ((address >= BITMAP_BASE) && ((address + 1) < BITMAP_BASE + BITMAP_BYTES)) data_out[15:0] <= { bitmap_ram[address+1 - BITMAP_BASE], bitmap_ram[address - BITMAP_BASE] };
+                        else if (address == 6'h0) data_out <= {16'b0, ctrl[15:0]};
+                        else data_out <= 32'h0;
+                    end
+                    2'b10: begin // Word read
+                        if ((address + 3) < OBJ_REGION_SZ) data_out <= { active_obj_ram[addr_p3], active_obj_ram[addr_p2], active_obj_ram[addr_p1], active_obj_ram[address] };
+                        else if ((address >= BITMAP_BASE) && ((address + 3) < BITMAP_BASE + BITMAP_BYTES)) data_out <= { bitmap_ram[address+3 - BITMAP_BASE], bitmap_ram[address+2 - BITMAP_BASE], bitmap_ram[address+1 - BITMAP_BASE], bitmap_ram[address - BITMAP_BASE] };
+                        else if (address == 6'h0) data_out <= ctrl;
+                        else data_out <= 32'h0;
+                    end
+                    default: data_out <= 32'h0;
+                endcase
+            end else begin
+                data_out <= 32'h0;
             end
         end
     end
-end
 
-    // ---- vsync / staging swap / user_interrupt protocol ----
-    // On each rising edge of vsync:
-    //   if (STAGING_READY == 0) => pulse user_interrupt for 1 cycle to ask host to provide staging data.
-    //   if (STAGING_READY == 1) => copy staging_obj_ram -> active_obj_ram and clear STAGING_READY.
+    // --- VSYNC and Staging Logic ---
     reg vsync_d;
     always @(posedge clk) vsync_d <= vsync;
 
-    // user_interrupt pulse generator (1 clock) on vsync rising when staging not ready
     always @(posedge clk) begin
         if (!rst_n) user_interrupt <= 1'b0;
         else begin
             user_interrupt <= 1'b0; // default
             if (vsync && !vsync_d) begin // rising edge
-                if (!control_reg[1]) begin
-                    // request new staging data for next frame
+                if (!control_reg[1]) begin // STAGING_READY is 0
                     user_interrupt <= 1'b1;
-                end else begin
-                    // staging ready -> commit it now (copy to active)
+                end else begin // STAGING_READY is 1
                     for (i = 0; i < OBJ_REGION_SZ; i = i + 1) begin
                         active_obj_ram[i] <= stage_obj_ram[i];
                     end
-                    // clear STAGING_READY bit (host must set it again next frame when new staging is ready)
                     control_reg[1] <= 1'b0;
                     user_interrupt <= 1'b0;
                 end
@@ -220,19 +193,19 @@ end
         end
     end
     
+    // --- Sub-module Instantiations ---
     video_controller u_video_controller(
-        .clk      	(clk       ),
-        .reset    	(rst_n     ),
-        .polarity 	(1'b1      ), // 0 = negative polarity (VGA, SVGA), 1 = positive polarity (XGA, SXGA)
-        .hsync    	(hsync     ),
-        .vsync    	(vsync     ),
-        .visible  	(visible   ),
-        .pix_x    	(pix_x     ),
-        .pix_y    	(pix_y     )
+        .clk      (clk    ),
+        .reset    (~rst_n ), // Assuming video controller needs active-high reset
+        .polarity (1'b1   ),
+        .hsync    (hsync  ),
+        .vsync    (vsync  ),
+        .visible  (visible),
+        .pix_x    (pix_x  ),
+        .pix_y    (pix_y  )
     );
 
     wire [1:0] bg_R, bg_G, bg_B;
-
     bg background (
         .clk(clk),
         .rst_n(rst_n),
@@ -242,121 +215,57 @@ end
         .vsync(vsync),
         .R(bg_R),
         .G(bg_G),
-        .B(bg_B)
-        //.start      (start     )
+        .B(bg_B),
+        .start(start)
     );
 
+    // --- Rendering Logic ---
+    wire [7:0] logic_x = pix_x[9:2];
+    wire [7:0] logic_y = pix_y[9:2];
 
-    // Address 0 reads the example data register.  
-    // Address 4 reads ui_in
-    // All other addresses read 0.
-    assign data_out = (address == 6'h0) ? ctrl :
-        (address == 6'h4) ? {22'h0,pix_x } :
-        (address == 6'h8) ? {22'h0,pix_y } :
-        (address == 6'hc) ? {24'h0,uo_out} :
-                      32'h0;
+    always @(posedge clk) begin
+        // FIX: Added temp variables for Verilog-1995 compatibility
+        reg [7:0] temp_logic_x, temp_logic_y;
+        temp_logic_x = logic_x - x;
+        temp_logic_y = logic_y - y;
 
-    
-
-    // All reads complete in 1 clock
-    assign data_ready = 1;
-
-
-    
-    // --- Rendering: physical -> logical mapping (nearest-neighbor 4x scaling) ---
-    wire [7:0] logic_x = pix_x[9:2]; // 1024/4 = 256
-    wire [7:0] logic_y = pix_y[9:2]; // 768/4  = 192
-
-    // --- Sprite test loop uses active_obj_ram for stable frame display ---
-// --- Sprite test loop uses active_obj_ram for stable frame display ---
-    integer spr_idx;
-    reg pix_hit;
-    always @(posedge clk ) begin
         if (!rst_n) begin
             pix_hit <= 1'b0;
         end else begin
-            pix_hit <= 1'b0;
-            for (spr_idx = 0; spr_idx < MAX_SPRITES; spr_idx = spr_idx + 1) begin : SPRITES
-                // local variables per sprite
-                reg [7:0] x, y, bitmap_offset, size_byte;
-                reg [3:0] width, height;
-                reg [3:0] spr_x, spr_y;
-                integer bit_offset;
-                integer byte_addr;
-                integer bit_in_byte;
-                reg [7:0] bmp_byte;
-                reg bmp_bit;
-
-                // Provide default values
-                spr_x = 4'b0;
-                spr_y = 4'b0;
-                bit_offset = 0;
-                byte_addr = 0;
-                bit_in_byte = 0;
-                bmp_byte = 8'b0;
-                bmp_bit = 1'b0;
-
-                // read object fields from active_obj_ram
-                x = active_obj_ram[spr_idx*OBJ_BYTES + 0];
-                y = active_obj_ram[spr_idx*OBJ_BYTES + 1];
+            pix_hit <= 1'b0; // Default value for the cycle
+            for (spr_idx = 0; spr_idx < MAX_SPRITES; spr_idx = spr_idx + 1) begin
+                x             = active_obj_ram[spr_idx*OBJ_BYTES + 0];
+                y             = active_obj_ram[spr_idx*OBJ_BYTES + 1];
                 bitmap_offset = active_obj_ram[spr_idx*OBJ_BYTES + 2];
-                size_byte = active_obj_ram[spr_idx*OBJ_BYTES + 3];
-                width  = size_byte[7:4] + 1;
-                height = size_byte[3:0] + 1;
+                size_byte     = active_obj_ram[spr_idx*OBJ_BYTES + 3];
+                width         = size_byte[7:4] + 1;
+                height        = size_byte[3:0] + 1;
 
-                // bounds check and fast reject
-                                if ( video_active
-                                    && (logic_x >= x) && (logic_x < x + {4'b0, width})
-                                    && (logic_y >= y) && (logic_y < y + {4'b0, height}) ) begin
-                                        // local coordinates in sprite
-                                        spr_x = (logic_x - x)[3:0];
-                                        spr_y = (logic_y - y)[3:0];
-                                        // bit addressing: row-major, 1 bit per pixel
-                                        bit_offset = spr_y * {4'b0, width} + spr_x;
-                                        byte_addr  = bitmap_offset + (bit_offset >> 3); // which byte in bitmap_ram
-                                        bit_in_byte = bit_offset[2:0];               // bit index in that byte
-                                        if ((byte_addr >= 0) && (byte_addr < BITMAP_BYTES)) begin
-                                                bmp_byte = bitmap_ram[byte_addr];
-                                                // assume LSB is bit 0; if your asset format is MSB-first use bmp_byte[7-bit_in_byte]
-                                                bmp_bit = bmp_byte[bit_in_byte];
-                                                pix_hit <= pix_hit | bmp_bit;
-                                        end
-                                end
+                if (visible && (logic_x >= x) && (logic_x < x + width) && (logic_y >= y) && (logic_y < y + height)) begin
+                    spr_x       = temp_logic_x[3:0];
+                    spr_y       = temp_logic_y[3:0];
+                    bit_offset  = spr_y * width + spr_x;
+                    byte_addr   = bitmap_offset + (bit_offset >> 3);
+                    bit_in_byte = bit_offset & 3'h7;
+                    if ((byte_addr >= 0) && (byte_addr < BITMAP_BYTES)) begin
+                        bmp_byte = bitmap_ram[byte_addr];
+                        bmp_bit  = bmp_byte[bit_in_byte];
+                        if(bmp_bit) begin
+                            pix_hit <= 1'b1;
+                        end
+                    end
+                end
             end
         end
     end
 
+    // --- Final Output Assignments ---
     assign sprite_pixel_on = pix_hit;
 
-    assign R = sprite_pixel_on              ? 2'b11 : bg_R;
-    assign G = R;
-    assign B = R;
+    assign R = sprite_pixel_on ? 2'b11 : bg_R;
+    assign G = sprite_pixel_on ? 2'b11 : bg_G;
+    assign B = sprite_pixel_on ? 2'b11 : bg_B;
 
-    assign uo_out = {vsync, hsync, B, G, R}; 
+    assign uo_out = {1'b0, 1'b0, vsync, hsync, B, G, R};
     
-    // User interrupt is generated on rising edge of ui_in[6], and cleared by writing a 1 to the low bit of address 8.
-    // reg example_interrupt;
-    // reg last_ui_in_6;
-
-    // always @(posedge clk) begin
-    //     if (!rst_n) begin
-    //         example_interrupt <= 0;
-    //     end
-
-    //     if (ui_in[6] && !last_ui_in_6) begin
-    //         example_interrupt <= 1;
-    //     end else if (address == 6'h8 && data_write_n != 2'b11 && data_in[0]) begin
-    //         example_interrupt <= 0;
-    //     end
-
-    //     last_ui_in_6 <= ui_in[6];
-    // end
-
-    // assign user_interrupt = example_interrupt;
-
-    // List all unused inputs to prevent warnings
-    // data_read_n is unused as none of our behaviour depends on whether
-    // registers are being read.
-    wire _unused = &{data_read_n, 1'b0};
-
 endmodule
