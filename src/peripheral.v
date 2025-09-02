@@ -100,24 +100,26 @@ module tqvp_adder (
     assign data_ready = 1;
     
     // User interrupt is generated on rising edge of ui_in[6], and cleared by writing a 1 to the low bit of address 8.
-    reg example_interrupt;
-    reg last_ui_in_6;
+    // reg example_interrupt;
+    // reg last_ui_in_6;
 
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            example_interrupt <= 0;
-        end
+    // always @(posedge clk) begin
+    //     if (!rst_n) begin
+    //         example_interrupt <= 0;
+    //     end
 
-        if (ui_in[6] && !last_ui_in_6) begin
-            example_interrupt <= 1;
-        end else if (address == 6'h40 && data_write_n != 2'b11 && data_in[0]) begin
-            example_interrupt <= 0;
-        end
+    //     if (ui_in[6] && !last_ui_in_6) begin
+    //         example_interrupt <= 1;
+    //     end else if (address == 6'h40 && data_write_n != 2'b11 && data_in[0]) begin
+    //         example_interrupt <= 0;
+    //     end
 
-        last_ui_in_6 <= ui_in[6];
-    end
+    //     last_ui_in_6 <= ui_in[6];
+    // end
 
-    assign user_interrupt = example_interrupt;
+    // assign user_interrupt = example_interrupt;
+
+    
 
     localparam MAX_SPRITES = 1;
     localparam OBJ_BYTES     = 4;
@@ -192,6 +194,27 @@ module tqvp_adder (
                 end
             end
             // Note: we keep reading/writing staging only. Active table is swapped later at vsync.
+        end
+    end
+
+    reg vsync_d;
+    always @(posedge clk) vsync_d <= vsync;
+
+    always @(posedge clk) begin
+        if (!rst_n) user_interrupt <= 1'b0;
+        else begin
+            user_interrupt <= 1'b0; // default
+            if (vsync && !vsync_d) begin // rising edge
+                if (!control_reg[1]) begin // STAGING_READY is 0
+                    user_interrupt <= 1'b1;
+                end else begin // STAGING_READY is 1
+                    for (i = 0; i < OBJ_REGION_SZ; i = i + 1) begin
+                        active_obj_ram[i] <= stage_obj_ram[i];
+                    end
+                    control_reg[1] <= 1'b0;
+                    user_interrupt <= 1'b0;
+                end
+            end
         end
     end
 
