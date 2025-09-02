@@ -100,8 +100,8 @@ module tqvp_adder (
     assign data_ready = 1;
     
     // User interrupt is generated on rising edge of ui_in[6], and cleared by writing a 1 to the low bit of address 8.
-    // reg example_interrupt;
-    // reg last_ui_in_6;
+    reg example_interrupt;
+    reg last_ui_in_6;
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -131,7 +131,7 @@ module tqvp_adder (
     reg [7:0] bitmap_ram     [0:BITMAP_BYTES - 1];
     reg [7:0] control_reg;
 
-        integer i;
+    integer i;
     always @(posedge clk) begin
         if (!rst_n) begin
             // reset memories & control
