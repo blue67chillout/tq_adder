@@ -5,9 +5,6 @@
 
 `default_nettype none
 
-
-`default_nettype none
-
 // Change the name of this module to something that reflects its functionality and includes your name for uniqueness
 // For example tqvp_yourname_spi for an SPI peripheral.
 // Then edit tt_wrapper.v line 41 and change tqvp_example to your chosen module name.
@@ -193,27 +190,37 @@ module tqvp_adder (
                     end
                 end
             end
-            // Note: we keep reading/writing staging only. Active table is swapped later at vsync.
-        end
-    end
-
-    reg vsync_d;
-    always @(posedge clk) vsync_d <= vsync;
-    reg frame_interrupt ;
-    always @(posedge clk) begin
-        if (!rst_n) frame_interrupt <= 1'b0;
-        else begin
-            frame_interrupt <= 1'b0; // default
-            if (vsync && !vsync_d) begin // rising edge
-                if (!control_reg[1]) begin // STAGING_READY is 0
-                    frame_interrupt <= 1'b1;
-                end else begin // STAGING_READY is 1
+            
+            // **FIX**: Vsync logic moved here from the second always block.
+            // This logic will be overridden by a CPU write on the same clock cycle,
+            // which is the desired priority.
+            if (vsync && !vsync_d) begin // rising edge of vsync
+                if (control_reg[1]) begin // STAGING_READY is 1
+                    // Copy staged object data to active memory
                     for (i = 0; i < OBJ_REGION_SZ; i = i + 1) begin
                         active_obj_ram[i] <= stage_obj_ram[i];
                     end
+                    // Clear the staging ready flag automatically
                     control_reg[1] <= 1'b0;
-                    frame_interrupt <= 1'b0;
                 end
+            end
+        end
+    end
+
+   reg vsync_d;
+    always @(posedge clk) vsync_d <= vsync;
+    reg frame_interrupt ;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            frame_interrupt <= 1'b0;
+        end else begin
+            frame_interrupt <= 1'b0; // Default to clearing the interrupt each cycle
+            if (vsync && !vsync_d) begin // Rising edge of vsync
+                // If staging wasn't ready at the start of the frame, generate an interrupt
+                if (!control_reg[1]) begin // STAGING_READY is 0
+                    frame_interrupt <= 1'b1;
+                end
+                // The transfer logic for active_obj_ram and control_reg has been moved
             end
         end
     end
