@@ -18,13 +18,13 @@ module tqvp_adder (
     input  wire [1:0] data_write_n,   // 11 = no write, 00 = 8-bits, 01 = 16-bits, 10 = 32-bits
     input  wire [1:0] data_read_n,    // 11 = no read,  00 = 8-bits, 01 = 16-bits, 10 = 32-bits
     
-    output reg [31:0] data_out,       // Data out from the peripheral
-    output reg        data_ready,
+    output            [31:0] data_out,       // Data out from the peripheral
+    output            data_ready,
     output reg        user_interrupt  // Dedicated interrupt request for this peripheral
 );
 
     // --- Signal Declarations ---
-    reg  [31:0] ctrl;
+   
     reg         hsync;
     reg         vsync;
     wire        visible;
@@ -32,7 +32,7 @@ module tqvp_adder (
     reg  [9:0]  pix_y;
     wire [1:0]  R,G,B;
     wire        sprite_pixel_on;
-    wire        start = ctrl[0];
+    
 
     // --- Sprite Engine Parameters ---
     parameter MAX_SPRITES = 2;
@@ -62,8 +62,8 @@ module tqvp_adder (
     
     // --- Temporary variables for Verilog-1995 compatibility ---
     // FIX: All declarations moved here from inside always blocks.
-    reg [5:0] temp_addr_p1, temp_addr_p2, temp_addr_p3;
-    reg [7:0] temp_logic_x, temp_logic_y;
+   // reg [5:0] temp_addr_p1, temp_addr_p2, temp_addr_p3;
+    //reg [7:0] temp_logic_x, temp_logic_y;
 
 
     // --- Host Read/Write Interface ---
@@ -71,7 +71,7 @@ module tqvp_adder (
     integer i;
     always @(posedge clk) begin
         if (!rst_n) begin
-            ctrl <= 32'b0;
+            // reset memories & control
             for (i = 0; i < OBJ_REGION_SZ; i = i + 1) begin
                 active_obj_ram[i] <= 8'b0;
                 stage_obj_ram[i]  <= 8'b0;
@@ -80,82 +80,57 @@ module tqvp_adder (
                 bitmap_ram[i] <= 8'b0;
             end
             control_reg <= 8'b0;
-            data_ready <= 1'b0;
-            data_out   <= 32'b0;
         end else begin
-            // --- Write Logic ---
-            temp_addr_p1 = address + 1;
-            temp_addr_p2 = address + 2;
-            temp_addr_p3 = address + 3;
-
+            // Host writes (synchronous)
             if (data_write_n != 2'b11) begin
-                if (address == 6'h0) begin // Write to ctrl register
-                    if (data_write_n != 2'b11)         ctrl[7:0]   <= data_in[7:0];
-                    if (data_write_n[1] != data_write_n[0]) ctrl[15:8]  <= data_in[15:8];
-                    if (data_write_n == 2'b10)         ctrl[31:16] <= data_in[31:16];
-                end else if (data_write_n == 2'b00) begin // Byte write
-                    if (address < OBJ_REGION_SZ)
+                // compute write width and perform writes (byte/half/word) at address
+                // only perform writes if address and region valid and allowed by control_reg
+                if (data_write_n == 2'b00) begin
+                    // byte write
+                    if (address < OBJ_REGION_SZ) begin
                         stage_obj_ram[address] <= data_in[7:0];
-                    else if ((address >= BITMAP_BASE) && (address < BITMAP_BASE + BITMAP_BYTES) && control_reg[0])
-                        bitmap_ram[address - BITMAP_BASE] <= data_in[7:0];
-                    else if (address == CONTROL_ADDR)
+                    end else if ((address >= BITMAP_BASE) && (address < BITMAP_BASE + BITMAP_BYTES)) begin
+                        if (control_reg[0]) // BITMAP_WRITE_EN
+                            bitmap_ram[address - BITMAP_BASE] <= data_in[7:0];
+                    end else if (address == CONTROL_ADDR) begin
                         control_reg <= data_in[7:0];
-                end else if (data_write_n == 2'b01) begin // Halfword write
-                    if ((address + 1) < OBJ_REGION_SZ) begin
-                        stage_obj_ram[address]        <= data_in[7:0];
-                        stage_obj_ram[temp_addr_p1] <= data_in[15:8];
-                    end else if ((address >= BITMAP_BASE) && ((address + 1) < BITMAP_BASE + BITMAP_BYTES) && control_reg[0]) begin
-                        bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
-                        bitmap_ram[address+1 - BITMAP_BASE] <= data_in[15:8];
                     end
-                end else if (data_write_n == 2'b10) begin // Word write
+                end else if (data_write_n == 2'b01) begin
+                    // halfword (16-bit) write - address must be <= 62
+                    if ((address + 1) < OBJ_REGION_SZ) begin
+                        stage_obj_ram[address]   <= data_in[7:0];
+                        stage_obj_ram[address+1] <= data_in[15:8];
+                    end else if ((address >= BITMAP_BASE) && ((address + 1) < BITMAP_BASE + BITMAP_BYTES)) begin
+                        if (control_reg[0]) begin
+                            bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
+                            bitmap_ram[address+1 - BITMAP_BASE] <= data_in[15:8];
+                        end
+                    end else if (address == CONTROL_ADDR - 1) begin
+                        // allow halfword write that ends at CONTROL_ADDR
+                        control_reg <= data_in[15:8];
+                    end
+                end else if (data_write_n == 2'b10) begin
+                    // word (32-bit) write - address must be <= 60
                     if ((address + 3) < OBJ_REGION_SZ) begin
-                        stage_obj_ram[address]        <= data_in[7:0];
-                        stage_obj_ram[temp_addr_p1] <= data_in[15:8];
-                        stage_obj_ram[temp_addr_p2] <= data_in[23:16];
-                        stage_obj_ram[temp_addr_p3] <= data_in[31:24];
-                    end else if ((address >= BITMAP_BASE) && ((address + 3) < BITMAP_BASE + BITMAP_BYTES) && control_reg[0]) begin
-                        bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
-                        bitmap_ram[address+1 - BITMAP_BASE] <= data_in[15:8];
-                        bitmap_ram[address+2 - BITMAP_BASE] <= data_in[23:16];
-                        bitmap_ram[address+3 - BITMAP_BASE] <= data_in[31:24];
+                        stage_obj_ram[address]   <= data_in[7:0];
+                        stage_obj_ram[address+1] <= data_in[15:8];
+                        stage_obj_ram[address+2] <= data_in[23:16];
+                        stage_obj_ram[address+3] <= data_in[31:24];
+                    end else if ((address >= BITMAP_BASE) && ((address + 3) < BITMAP_BASE + BITMAP_BYTES)) begin
+                        if (control_reg[0]) begin
+                            bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
+                            bitmap_ram[address+1 - BITMAP_BASE] <= data_in[15:8];
+                            bitmap_ram[address+2 - BITMAP_BASE] <= data_in[23:16];
+                            bitmap_ram[address+3 - BITMAP_BASE] <= data_in[31:24];
+                        end
+                    end else if (address == CONTROL_ADDR - 3) begin
+                        control_reg <= data_in[31:24];
                     end
                 end
             end
-
-            // --- Read Logic ---
-            data_ready <= (data_read_n != 2'b11); // Read is ready in 1 cycle
-            if (data_read_n != 2'b11) begin
-                case(data_read_n)
-                    2'b00: begin // Byte read
-                        if (address < OBJ_REGION_SZ) data_out <= {24'b0, active_obj_ram[address]};
-                        else if ((address >= BITMAP_BASE) && (address < BITMAP_BASE + BITMAP_BYTES)) data_out <= {24'b0, bitmap_ram[address - BITMAP_BASE]};
-                        else if (address == CONTROL_ADDR) data_out <= {24'b0, control_reg};
-                        else if (address == 6'h0) data_out <= {24'b0, ctrl[7:0]};
-                        else if (address == 6'h4) data_out <= {22'b0, pix_x};
-                        else if (address == 6'h8) data_out <= {22'b0, pix_y};
-                        else data_out <= 32'h0;
-                    end
-                    2'b01: begin // Halfword read
-                        if ((address + 1) < OBJ_REGION_SZ) data_out <= {16'b0, active_obj_ram[temp_addr_p1], active_obj_ram[address] };
-                        else if ((address >= BITMAP_BASE) && ((address + 1) < BITMAP_BASE + BITMAP_BYTES)) data_out <= {16'b0, bitmap_ram[address+1 - BITMAP_BASE], bitmap_ram[address - BITMAP_BASE] };
-                        else if (address == 6'h0) data_out <= {16'b0, ctrl[15:0]};
-                        else data_out <= 32'h0;
-                    end
-                    2'b10: begin // Word read
-                        if ((address + 3) < OBJ_REGION_SZ) data_out <= { active_obj_ram[temp_addr_p3], active_obj_ram[temp_addr_p2], active_obj_ram[temp_addr_p1], active_obj_ram[address] };
-                        else if ((address >= BITMAP_BASE) && ((address + 3) < BITMAP_BASE + BITMAP_BYTES)) data_out <= { bitmap_ram[address+3 - BITMAP_BASE], bitmap_ram[address+2 - BITMAP_BASE], bitmap_ram[address+1 - BITMAP_BASE], bitmap_ram[address - BITMAP_BASE] };
-                        else if (address == 6'h0) data_out <= ctrl;
-                        else data_out <= 32'h0;
-                    end
-                    default: data_out <= 32'h0;
-                endcase
-            end else begin
-                data_out <= 32'h0;
-            end
+            // Note: we keep reading/writing staging only. Active table is swapped later at vsync.
         end
     end
-
     // --- VSYNC and Staging Logic ---
     reg vsync_d;
     always @(posedge clk) vsync_d <= vsync;
@@ -190,6 +165,8 @@ module tqvp_adder (
         .pix_y    (pix_y  )
     );
 
+    wire start = control_reg[3];
+
     wire [1:0] bg_R, bg_G, bg_B;
     bg background (
         .clk(clk),
@@ -208,10 +185,7 @@ module tqvp_adder (
     wire [7:0] logic_x = pix_x[9:2];
     wire [7:0] logic_y = pix_y[9:2];
 
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            pix_hit <= 1'b0;
-        end else begin
+    always @(*) begin
             pix_hit <= 1'b0; // Default value for the cycle
             for (spr_idx = 0; spr_idx < MAX_SPRITES; spr_idx = spr_idx + 1) begin
                 // Read sprite attributes for this iteration
@@ -239,8 +213,8 @@ module tqvp_adder (
                     end
                 end
             end
-        end
     end
+    
 
     // --- Final Output Assignments ---
     assign sprite_pixel_on = pix_hit;
