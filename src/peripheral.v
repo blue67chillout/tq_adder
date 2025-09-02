@@ -35,12 +35,12 @@ module tqvp_adder (
     
 
     // --- Sprite Engine Parameters ---
-    parameter MAX_SPRITES = 2;
+    parameter MAX_SPRITES = 1;
     localparam OBJ_BYTES     = 4;
     localparam OBJ_REGION_SZ = OBJ_BYTES * MAX_SPRITES;
     localparam BITMAP_BASE   = OBJ_REGION_SZ;
-    localparam BITMAP_BYTES  = 63 - OBJ_REGION_SZ;
-    localparam CONTROL_ADDR  = 63;
+    localparam BITMAP_BYTES  = 31 - OBJ_REGION_SZ;
+    localparam CONTROL_ADDR  = 32;
 
     // --- Memories and Control ---
     reg [7:0] active_obj_ram [0:OBJ_REGION_SZ - 1];
