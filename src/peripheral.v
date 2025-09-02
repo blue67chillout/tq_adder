@@ -181,48 +181,48 @@ module tqvp_adder (
         .start(start)
     );
 
-    // --- Rendering Logic ---
-    wire [7:0] logic_x = pix_x[9:2];
-    wire [7:0] logic_y = pix_y[9:2];
+    // // --- Rendering Logic ---
+    // wire [7:0] logic_x = pix_x[9:2];
+    // wire [7:0] logic_y = pix_y[9:2];
 
-    always @(*) begin
-            pix_hit = 1'b0; // Default value for the cycle
-            temp_logic_x = 0;
-            temp_logic_y = 0;
-            spr_x        = 0;
-            spr_y        = 0;
-            bit_offset   = 0;
-            byte_addr    = 0;
-            bit_in_byte  = 0;
-            bmp_byte     = 0;
-            bmp_bit      = 0;
-            for (spr_idx = 0; spr_idx < MAX_SPRITES; spr_idx = spr_idx + 1) begin
-                // Read sprite attributes for this iteration
-                x             = active_obj_ram[spr_idx*OBJ_BYTES + 0];
-                y             = active_obj_ram[spr_idx*OBJ_BYTES + 1];
-                bitmap_offset = active_obj_ram[spr_idx*OBJ_BYTES + 2];
-                size_byte     = active_obj_ram[spr_idx*OBJ_BYTES + 3];
-                width         = size_byte[7:4] + 1;
-                height        = size_byte[3:0] + 1;
+    // always @(*) begin
+    //         pix_hit = 1'b0; // Default value for the cycle
+    //         temp_logic_x = 0;
+    //         temp_logic_y = 0;
+    //         spr_x        = 0;
+    //         spr_y        = 0;
+    //         bit_offset   = 0;
+    //         byte_addr    = 0;
+    //         bit_in_byte  = 0;
+    //         bmp_byte     = 0;
+    //         bmp_bit      = 0;
+    //         for (spr_idx = 0; spr_idx < MAX_SPRITES; spr_idx = spr_idx + 1) begin
+    //             // Read sprite attributes for this iteration
+    //             x             = active_obj_ram[spr_idx*OBJ_BYTES + 0];
+    //             y             = active_obj_ram[spr_idx*OBJ_BYTES + 1];
+    //             bitmap_offset = active_obj_ram[spr_idx*OBJ_BYTES + 2];
+    //             size_byte     = active_obj_ram[spr_idx*OBJ_BYTES + 3];
+    //             width         = size_byte[7:4] + 1;
+    //             height        = size_byte[3:0] + 1;
 
-                if (visible && (logic_x >= x) && (logic_x < x + width) && (logic_y >= y) && (logic_y < y + height)) begin
-                    temp_logic_x  = logic_x - x;
-                    temp_logic_y  = logic_y - y;
-                    spr_x         = temp_logic_x[3:0];
-                    spr_y         = temp_logic_y[3:0];
-                    bit_offset    = spr_y * width + spr_x;
-                    byte_addr     = bitmap_offset + (bit_offset >> 3);
-                    bit_in_byte   = bit_offset & 3'h7;
-                    if ((byte_addr >= 0) && (byte_addr < BITMAP_BYTES)) begin
-                        bmp_byte = bitmap_ram[byte_addr];
-                        bmp_bit  = bmp_byte[bit_in_byte];
-                        if(bmp_bit) begin
-                            pix_hit = 1'b1;
-                        end
-                    end
-                end
-            end
-    end
+    //             if (visible && (logic_x >= x) && (logic_x < x + width) && (logic_y >= y) && (logic_y < y + height)) begin
+    //                 temp_logic_x  = logic_x - x;
+    //                 temp_logic_y  = logic_y - y;
+    //                 spr_x         = temp_logic_x[3:0];
+    //                 spr_y         = temp_logic_y[3:0];
+    //                 bit_offset    = spr_y * width + spr_x;
+    //                 byte_addr     = bitmap_offset + (bit_offset >> 3);
+    //                 bit_in_byte   = bit_offset & 3'h7;
+    //                 if ((byte_addr >= 0) && (byte_addr < BITMAP_BYTES)) begin
+    //                     bmp_byte = bitmap_ram[byte_addr];
+    //                     bmp_bit  = bmp_byte[bit_in_byte];
+    //                     if(bmp_bit) begin
+    //                         pix_hit = 1'b1;
+    //                     end
+    //                 end
+    //             end
+    //         end
+    // end
     
 
     // --- Final Output Assignments ---
