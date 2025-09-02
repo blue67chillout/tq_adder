@@ -32,18 +32,18 @@ module tqvp_adder (
 );
 
     // Implement a 32-bit read/write register at address 0
-    reg [31:0] ctrl;
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            ctrl <= 0;
-        end else begin
-            if (address == 6'h50 ) begin
-                if (data_write_n != 2'b11)              ctrl[7:0]   <= data_in[7:0];
-                if (data_write_n[1] != data_write_n[0]) ctrl[15:8]  <= data_in[15:8];
-                if (data_write_n == 2'b10)              ctrl[31:16] <= data_in[31:16];
-            end
-        end
-    end
+    // reg [31:0] ctrl;
+    // always @(posedge clk) begin
+    //     if (!rst_n) begin
+    //         ctrl <= 0;
+    //     end else begin
+    //         if (address == 6'h50 ) begin
+    //             if (data_write_n != 2'b11)              ctrl[7:0]   <= data_in[7:0];
+    //             if (data_write_n[1] != data_write_n[0]) ctrl[15:8]  <= data_in[15:8];
+    //             if (data_write_n == 2'b10)              ctrl[31:16] <= data_in[31:16];
+    //         end
+    //     end
+    // end
 
     // The bottom 8 bits of the stored data are added to ui_in and output to uo_out.
     reg hsync;
@@ -54,7 +54,25 @@ module tqvp_adder (
     
     wire [1:0]R,G,B ;
 
-    wire start = ctrl[0] ;
+    wire [1:0]bg_R,bg_G,bg_B ;
+    
+
+    wire start = control_reg[4] ;
+
+    integer   spr_idx;
+    reg       pix_hit;
+    reg [7:0] x, y, bitmap_offset, size_byte;
+    reg [3:0] width, height;
+    reg [3:0] spr_x, spr_y;
+    integer   bit_offset;
+    integer   byte_addr;
+    integer   bit_in_byte;
+    reg [7:0] bmp_byte;
+    reg       bmp_bit;
+    
+  
+   //reg [5:0] temp_addr_p1, temp_addr_p2, temp_addr_p3;
+   reg [7:0] temp_logic_x, temp_logic_y;
     
     video_controller u_video_controller(
         .clk      	(clk       ),
@@ -75,9 +93,9 @@ module tqvp_adder (
         .pix_x(pix_x),
         .pix_y(pix_y),
         .vsync(vsync),
-        .R(R),
-        .G(G),
-        .B(B),
+        .R(bg_R),
+        .G(bg_G),
+        .B(bg_B),
         .start      (start     )
     );
 
@@ -85,16 +103,7 @@ module tqvp_adder (
     // Address 0 reads the example data register.  
     // Address 4 reads ui_in
     // All other addresses read 0.
-    assign data_out = (address == 6'h0) ? ctrl :
-        (address == 6'h4) ? {22'h0,pix_x } :
-        (address == 6'h8) ? {22'h0,pix_y } :
-        (address == 6'hc) ? {24'h0,uo_out} :
-                      32'h0;
 
-    assign uo_out = {vsync, hsync, B, G, R}; 
-
-    // All reads complete in 1 clock
-    assign data_ready = 1;
     
     // User interrupt is generated on rising edge of ui_in[6], and cleared by writing a 1 to the low bit of address 8.
     // reg example_interrupt;
@@ -225,6 +234,68 @@ module tqvp_adder (
         end
     end
     assign user_interrupt = frame_interrupt ;
+
+
+    wire [7:0] logic_x = pix_x[9:2];
+    wire [7:0] logic_y = pix_y[9:2];
+
+    always @(*) begin
+            pix_hit = 1'b0; // Default value for the cycle
+            temp_logic_x = 0;
+            temp_logic_y = 0;
+            spr_x        = 0;
+            spr_y        = 0;
+            bit_offset   = 0;
+            byte_addr    = 0;
+            bit_in_byte  = 0;
+            bmp_byte     = 0;
+            bmp_bit      = 0;
+            for (spr_idx = 0; spr_idx < MAX_SPRITES; spr_idx = spr_idx + 1) begin
+                // Read sprite attributes for this iteration
+                x             = active_obj_ram[spr_idx*OBJ_BYTES + 0];
+                y             = active_obj_ram[spr_idx*OBJ_BYTES + 1];
+                bitmap_offset = active_obj_ram[spr_idx*OBJ_BYTES + 2];
+                size_byte     = active_obj_ram[spr_idx*OBJ_BYTES + 3];
+                width         = size_byte[7:4] + 1;
+                height        = size_byte[3:0] + 1;
+
+                if (visible && (logic_x >= x) && (logic_x < x + width) && (logic_y >= y) && (logic_y < y + height)) begin
+                    temp_logic_x  = logic_x - x;
+                    temp_logic_y  = logic_y - y;
+                    spr_x         = temp_logic_x[3:0];
+                    spr_y         = temp_logic_y[3:0];
+                    bit_offset    = spr_y * width + spr_x;
+                    byte_addr     = bitmap_offset + (bit_offset >> 3);
+                    bit_in_byte   = bit_offset & 3'h7;
+                    if ((byte_addr >= 0) && (byte_addr < BITMAP_BYTES)) begin
+                        bmp_byte = bitmap_ram[byte_addr];
+                        bmp_bit  = bmp_byte[bit_in_byte];
+                        if(bmp_bit) begin
+                            pix_hit = 1'b1;
+                        end
+                    end
+                end
+            end
+    end
+    
+
+    // --- Final Output Assignments ---
+   assign sprite_pixel_on = pix_hit;
+
+    assign R = sprite_pixel_on ? 2'b11 : bg_R;
+    assign G = sprite_pixel_on ? 2'b11 : bg_G;
+    assign B = sprite_pixel_on ? 2'b11 : bg_B;
+
+        assign data_out = (address == 6'h0) ? control_reg :
+        (address == 6'h4) ? {22'h0,pix_x } :
+        (address == 6'h8) ? {22'h0,pix_y } :
+        (address == 6'hc) ? {24'h0,uo_out} :
+                      32'h0;
+
+    assign uo_out = {vsync, hsync, B, G, R}; 
+
+    // All reads complete in 1 clock
+    assign data_ready = 1;
 
     // List all unused inputs to prevent warnings
     // data_read_n is unused as none of our behaviour depends on whether
