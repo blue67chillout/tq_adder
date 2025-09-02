@@ -199,24 +199,25 @@ module tqvp_adder (
 
     reg vsync_d;
     always @(posedge clk) vsync_d <= vsync;
-
+    reg frame_interrupt ;
     always @(posedge clk) begin
-        if (!rst_n) user_interrupt <= 1'b0;
+        if (!rst_n) frame_interrupt <= 1'b0;
         else begin
-            user_interrupt <= 1'b0; // default
+            frame_interrupt <= 1'b0; // default
             if (vsync && !vsync_d) begin // rising edge
                 if (!control_reg[1]) begin // STAGING_READY is 0
-                    user_interrupt <= 1'b1;
+                    frame_interrupt <= 1'b1;
                 end else begin // STAGING_READY is 1
                     for (i = 0; i < OBJ_REGION_SZ; i = i + 1) begin
                         active_obj_ram[i] <= stage_obj_ram[i];
                     end
                     control_reg[1] <= 1'b0;
-                    user_interrupt <= 1'b0;
+                    frame_interrupt <= 1'b0;
                 end
             end
         end
     end
+    assign user_interrupt = frame_interrupt ;
 
     // List all unused inputs to prevent warnings
     // data_read_n is unused as none of our behaviour depends on whether
