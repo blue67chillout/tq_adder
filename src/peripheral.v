@@ -56,7 +56,7 @@ module tqvp_adder (
 
     wire [1:0]bg_R,bg_G,bg_B ;
     
-
+    wire        sprite_pixel_on;
     wire start = control_reg[4] ;
 
     integer   spr_idx;
