@@ -187,6 +187,15 @@ module tqvp_adder (
 
     always @(*) begin
             pix_hit = 1'b0; // Default value for the cycle
+            temp_logic_x = 0;
+            temp_logic_y = 0;
+            spr_x        = 0;
+            spr_y        = 0;
+            bit_offset   = 0;
+            byte_addr    = 0;
+            bit_in_byte  = 0;
+            bmp_byte     = 0;
+            bmp_bit      = 0;
             for (spr_idx = 0; spr_idx < MAX_SPRITES; spr_idx = spr_idx + 1) begin
                 // Read sprite attributes for this iteration
                 x             = active_obj_ram[spr_idx*OBJ_BYTES + 0];
