@@ -56,7 +56,7 @@ module tqvp_adder (
     wire [1:0] R,G,B ;
 
     //wire start = ctrl[0] ;
-
+    parameter MAX_SPRITES = 2 ;
     localparam OBJ_BYTES     = 4;
     localparam OBJ_REGION_SZ = OBJ_BYTES * MAX_SPRITES; // bytes used for object table
     localparam BITMAP_BASE   = OBJ_REGION_SZ;           // start address for bitmap storage (auto-adjusted)
@@ -64,9 +64,9 @@ module tqvp_adder (
     localparam CONTROL_ADDR  = 63;                      // last byte reserved for control/status
 
     // --- internal memories ---
-    reg [7:0] active_obj_ram  [0:OBJ_REGION_SZ]; // support full 6-bit address
-    reg [7:0] stage_obj_ram   [0:OBJ_REGION_SZ]; // support full 6-bit address
-    reg [7:0] bitmap_ram      [0:BITMAP_BYTES-1]; // packed 1bpp bitmaps; host writes here only when enabled
+    reg [7:0] active_obj_ram  [0:OBJ_REGION_SZ - 1]; 
+    reg [7:0] stage_obj_ram   [0:OBJ_REGION_SZ - 1]; 
+    reg [7:0] bitmap_ram      [0:BITMAP_BYTES - 1]; // packed 1bpp bitmaps; host writes here only when enabled
 
     // --- control register bits (in CONTROL_ADDR) ---
     // bit0 = BITMAP_WRITE_EN  : when 1, host may write bitmap region
@@ -230,7 +230,8 @@ end
         .pix_x    	(pix_x     ),
         .pix_y    	(pix_y     )
     );
-    
+
+    wire [1:0] bg_R, bg_G, bg_B;
 
     bg background (
         .clk(clk),
@@ -239,9 +240,9 @@ end
         .pix_x(pix_x),
         .pix_y(pix_y),
         .vsync(vsync),
-        .R(R),
-        .G(G),
-        .B(B)
+        .R(bg_R),
+        .G(bg_G),
+        .B(bg_B)
         //.start      (start     )
     );
 
@@ -255,30 +256,103 @@ end
         (address == 6'hc) ? {24'h0,uo_out} :
                       32'h0;
 
-    assign uo_out = {vsync, hsync, B, G, R}; 
+    
 
     // All reads complete in 1 clock
     assign data_ready = 1;
+
+
     
-    // User interrupt is generated on rising edge of ui_in[6], and cleared by writing a 1 to the low bit of address 8.
-    reg example_interrupt;
-    reg last_ui_in_6;
+    // --- Rendering: physical -> logical mapping (nearest-neighbor 4x scaling) ---
+    wire [7:0] logic_x = pix_x[9:2]; // 1024/4 = 256
+    wire [7:0] logic_y = pix_y[9:2]; // 768/4  = 192
 
-    always @(posedge clk) begin
+    // --- Sprite test loop uses active_obj_ram for stable frame display ---
+// --- Sprite test loop uses active_obj_ram for stable frame display ---
+    integer spr_idx;
+    reg pix_hit;
+    always @(posedge clk ) begin
         if (!rst_n) begin
-            example_interrupt <= 0;
-        end
+            pix_hit <= 1'b0;
+        end else begin
+            pix_hit <= 1'b0;
+            for (spr_idx = 0; spr_idx < MAX_SPRITES; spr_idx = spr_idx + 1) begin : SPRITES
+                // local variables per sprite
+                reg [7:0] x, y, bitmap_offset, size_byte;
+                reg [3:0] width, height;
+                reg [3:0] spr_x, spr_y;
+                integer bit_offset;
+                integer byte_addr;
+                integer bit_in_byte;
+                reg [7:0] bmp_byte;
+                reg bmp_bit;
 
-        if (ui_in[6] && !last_ui_in_6) begin
-            example_interrupt <= 1;
-        end else if (address == 6'h8 && data_write_n != 2'b11 && data_in[0]) begin
-            example_interrupt <= 0;
-        end
+                // Provide default values
+                spr_x = 4'b0;
+                spr_y = 4'b0;
+                bit_offset = 0;
+                byte_addr = 0;
+                bit_in_byte = 0;
+                bmp_byte = 8'b0;
+                bmp_bit = 1'b0;
 
-        last_ui_in_6 <= ui_in[6];
+                // read object fields from active_obj_ram
+                x = active_obj_ram[spr_idx*OBJ_BYTES + 0];
+                y = active_obj_ram[spr_idx*OBJ_BYTES + 1];
+                bitmap_offset = active_obj_ram[spr_idx*OBJ_BYTES + 2];
+                size_byte = active_obj_ram[spr_idx*OBJ_BYTES + 3];
+                width  = size_byte[7:4] + 1;
+                height = size_byte[3:0] + 1;
+
+                // bounds check and fast reject
+                                if ( video_active
+                                    && (logic_x >= x) && (logic_x < x + {4'b0, width})
+                                    && (logic_y >= y) && (logic_y < y + {4'b0, height}) ) begin
+                                        // local coordinates in sprite
+                                        spr_x = (logic_x - x)[3:0];
+                                        spr_y = (logic_y - y)[3:0];
+                                        // bit addressing: row-major, 1 bit per pixel
+                                        bit_offset = spr_y * {4'b0, width} + spr_x;
+                                        byte_addr  = bitmap_offset + (bit_offset >> 3); // which byte in bitmap_ram
+                                        bit_in_byte = bit_offset[2:0];               // bit index in that byte
+                                        if ((byte_addr >= 0) && (byte_addr < BITMAP_BYTES)) begin
+                                                bmp_byte = bitmap_ram[byte_addr];
+                                                // assume LSB is bit 0; if your asset format is MSB-first use bmp_byte[7-bit_in_byte]
+                                                bmp_bit = bmp_byte[bit_in_byte];
+                                                pix_hit <= pix_hit | bmp_bit;
+                                        end
+                                end
+            end
+        end
     end
 
-    assign user_interrupt = example_interrupt;
+    assign sprite_pixel_on = pix_hit;
+
+    assign R = sprite_pixel_on              ? 2'b11 : bg_R;
+    assign G = R;
+    assign B = R;
+
+    assign uo_out = {vsync, hsync, B, G, R}; 
+    
+    // User interrupt is generated on rising edge of ui_in[6], and cleared by writing a 1 to the low bit of address 8.
+    // reg example_interrupt;
+    // reg last_ui_in_6;
+
+    // always @(posedge clk) begin
+    //     if (!rst_n) begin
+    //         example_interrupt <= 0;
+    //     end
+
+    //     if (ui_in[6] && !last_ui_in_6) begin
+    //         example_interrupt <= 1;
+    //     end else if (address == 6'h8 && data_write_n != 2'b11 && data_in[0]) begin
+    //         example_interrupt <= 0;
+    //     end
+
+    //     last_ui_in_6 <= ui_in[6];
+    // end
+
+    // assign user_interrupt = example_interrupt;
 
     // List all unused inputs to prevent warnings
     // data_read_n is unused as none of our behaviour depends on whether
