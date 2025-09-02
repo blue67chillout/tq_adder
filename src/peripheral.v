@@ -32,7 +32,7 @@ module tqvp_adder (
     reg  [9:0]  pix_y;
     wire [1:0]  R,G,B;
     wire        sprite_pixel_on;
-    wire        start = ctrl[0]; // Example: Use bit 0 of ctrl register to start the animation
+    wire        start = ctrl[0];
 
     // --- Sprite Engine Parameters ---
     parameter MAX_SPRITES = 2;
@@ -48,8 +48,7 @@ module tqvp_adder (
     reg [7:0] bitmap_ram     [0:BITMAP_BYTES - 1];
     reg [7:0] control_reg;
 
-    // --- Rendering Logic Variables ---
-    // FIX: Moved variable declarations outside of the always block.
+    // --- Rendering Logic & Temp Variables ---
     integer   spr_idx;
     reg       pix_hit;
     reg [7:0] x, y, bitmap_offset, size_byte;
@@ -60,17 +59,17 @@ module tqvp_adder (
     integer   bit_in_byte;
     reg [7:0] bmp_byte;
     reg       bmp_bit;
+    
+    // --- Temporary variables for Verilog-1995 compatibility ---
+    // FIX: All declarations moved here from inside always blocks.
+    reg [5:0] temp_addr_p1, temp_addr_p2, temp_addr_p3;
+    reg [7:0] temp_logic_x, temp_logic_y;
 
 
-    // --- Host Write Interface ---
+    // --- Host Read/Write Interface ---
+    // FIX: Merged read and write logic into a single block to avoid multiple drivers and re-declarations.
     integer i;
     always @(posedge clk) begin
-        // FIX: Added temporary variables for Verilog-1995 compatibility
-        reg [5:0] addr_p1, addr_p2, addr_p3;
-        addr_p1 = address + 1;
-        addr_p2 = address + 2;
-        addr_p3 = address + 3;
-
         if (!rst_n) begin
             ctrl <= 32'b0;
             for (i = 0; i < OBJ_REGION_SZ; i = i + 1) begin
@@ -81,64 +80,50 @@ module tqvp_adder (
                 bitmap_ram[i] <= 8'b0;
             end
             control_reg <= 8'b0;
+            data_ready <= 1'b0;
+            data_out   <= 32'b0;
         end else begin
+            // --- Write Logic ---
+            temp_addr_p1 = address + 1;
+            temp_addr_p2 = address + 2;
+            temp_addr_p3 = address + 3;
+
             if (data_write_n != 2'b11) begin
-                // --- Handle writes to different memory regions ---
                 if (address == 6'h0) begin // Write to ctrl register
                     if (data_write_n != 2'b11)         ctrl[7:0]   <= data_in[7:0];
                     if (data_write_n[1] != data_write_n[0]) ctrl[15:8]  <= data_in[15:8];
                     if (data_write_n == 2'b10)         ctrl[31:16] <= data_in[31:16];
                 end else if (data_write_n == 2'b00) begin // Byte write
-                    if (address < OBJ_REGION_SZ) begin
+                    if (address < OBJ_REGION_SZ)
                         stage_obj_ram[address] <= data_in[7:0];
-                    end else if ((address >= BITMAP_BASE) && (address < BITMAP_BASE + BITMAP_BYTES)) begin
-                        if (control_reg[0])
-                            bitmap_ram[address - BITMAP_BASE] <= data_in[7:0];
-                    end else if (address == CONTROL_ADDR) begin
+                    else if ((address >= BITMAP_BASE) && (address < BITMAP_BASE + BITMAP_BYTES) && control_reg[0])
+                        bitmap_ram[address - BITMAP_BASE] <= data_in[7:0];
+                    else if (address == CONTROL_ADDR)
                         control_reg <= data_in[7:0];
-                    end
                 end else if (data_write_n == 2'b01) begin // Halfword write
                     if ((address + 1) < OBJ_REGION_SZ) begin
-                        stage_obj_ram[address]   <= data_in[7:0];
-                        stage_obj_ram[addr_p1] <= data_in[15:8];
-                    end else if ((address >= BITMAP_BASE) && ((address + 1) < BITMAP_BASE + BITMAP_BYTES)) begin
-                        if (control_reg[0]) begin
-                            bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
-                            bitmap_ram[address+1 - BITMAP_BASE] <= data_in[15:8];
-                        end
+                        stage_obj_ram[address]        <= data_in[7:0];
+                        stage_obj_ram[temp_addr_p1] <= data_in[15:8];
+                    end else if ((address >= BITMAP_BASE) && ((address + 1) < BITMAP_BASE + BITMAP_BYTES) && control_reg[0]) begin
+                        bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
+                        bitmap_ram[address+1 - BITMAP_BASE] <= data_in[15:8];
                     end
                 end else if (data_write_n == 2'b10) begin // Word write
                     if ((address + 3) < OBJ_REGION_SZ) begin
-                        stage_obj_ram[address]   <= data_in[7:0];
-                        stage_obj_ram[addr_p1] <= data_in[15:8];
-                        stage_obj_ram[addr_p2] <= data_in[23:16];
-                        stage_obj_ram[addr_p3] <= data_in[31:24];
-                    end else if ((address >= BITMAP_BASE) && ((address + 3) < BITMAP_BASE + BITMAP_BYTES)) begin
-                        if (control_reg[0]) begin
-                            bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
-                            bitmap_ram[address+1 - BITMAP_BASE] <= data_in[15:8];
-                            bitmap_ram[address+2 - BITMAP_BASE] <= data_in[23:16];
-                            bitmap_ram[address+3 - BITMAP_BASE] <= data_in[31:24];
-                        end
+                        stage_obj_ram[address]        <= data_in[7:0];
+                        stage_obj_ram[temp_addr_p1] <= data_in[15:8];
+                        stage_obj_ram[temp_addr_p2] <= data_in[23:16];
+                        stage_obj_ram[temp_addr_p3] <= data_in[31:24];
+                    end else if ((address >= BITMAP_BASE) && ((address + 3) < BITMAP_BASE + BITMAP_BYTES) && control_reg[0]) begin
+                        bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
+                        bitmap_ram[address+1 - BITMAP_BASE] <= data_in[15:8];
+                        bitmap_ram[address+2 - BITMAP_BASE] <= data_in[23:16];
+                        bitmap_ram[address+3 - BITMAP_BASE] <= data_in[31:24];
                     end
                 end
             end
-        end
-    end
 
-    // --- Host Read Interface ---
-    // FIX: Merged all read logic into a single clocked block to avoid multiple drivers.
-    always @(posedge clk) begin
-        // FIX: Added temporary variables for Verilog-1995 compatibility
-        reg [5:0] addr_p1, addr_p2, addr_p3;
-        addr_p1 = address + 1;
-        addr_p2 = address + 2;
-        addr_p3 = address + 3;
-
-        if (!rst_n) begin
-            data_ready <= 1'b0;
-            data_out   <= 32'b0;
-        end else begin
+            // --- Read Logic ---
             data_ready <= (data_read_n != 2'b11); // Read is ready in 1 cycle
             if (data_read_n != 2'b11) begin
                 case(data_read_n)
@@ -152,13 +137,13 @@ module tqvp_adder (
                         else data_out <= 32'h0;
                     end
                     2'b01: begin // Halfword read
-                        if ((address + 1) < OBJ_REGION_SZ) data_out[15:0] <= { active_obj_ram[addr_p1], active_obj_ram[address] };
-                        else if ((address >= BITMAP_BASE) && ((address + 1) < BITMAP_BASE + BITMAP_BYTES)) data_out[15:0] <= { bitmap_ram[address+1 - BITMAP_BASE], bitmap_ram[address - BITMAP_BASE] };
+                        if ((address + 1) < OBJ_REGION_SZ) data_out <= {16'b0, active_obj_ram[temp_addr_p1], active_obj_ram[address] };
+                        else if ((address >= BITMAP_BASE) && ((address + 1) < BITMAP_BASE + BITMAP_BYTES)) data_out <= {16'b0, bitmap_ram[address+1 - BITMAP_BASE], bitmap_ram[address - BITMAP_BASE] };
                         else if (address == 6'h0) data_out <= {16'b0, ctrl[15:0]};
                         else data_out <= 32'h0;
                     end
                     2'b10: begin // Word read
-                        if ((address + 3) < OBJ_REGION_SZ) data_out <= { active_obj_ram[addr_p3], active_obj_ram[addr_p2], active_obj_ram[addr_p1], active_obj_ram[address] };
+                        if ((address + 3) < OBJ_REGION_SZ) data_out <= { active_obj_ram[temp_addr_p3], active_obj_ram[temp_addr_p2], active_obj_ram[temp_addr_p1], active_obj_ram[address] };
                         else if ((address >= BITMAP_BASE) && ((address + 3) < BITMAP_BASE + BITMAP_BYTES)) data_out <= { bitmap_ram[address+3 - BITMAP_BASE], bitmap_ram[address+2 - BITMAP_BASE], bitmap_ram[address+1 - BITMAP_BASE], bitmap_ram[address - BITMAP_BASE] };
                         else if (address == 6'h0) data_out <= ctrl;
                         else data_out <= 32'h0;
@@ -196,7 +181,7 @@ module tqvp_adder (
     // --- Sub-module Instantiations ---
     video_controller u_video_controller(
         .clk      (clk    ),
-        .reset    (~rst_n ), // Assuming video controller needs active-high reset
+        .reset    (~rst_n ),
         .polarity (1'b1   ),
         .hsync    (hsync  ),
         .vsync    (vsync  ),
@@ -224,16 +209,12 @@ module tqvp_adder (
     wire [7:0] logic_y = pix_y[9:2];
 
     always @(posedge clk) begin
-        // FIX: Added temp variables for Verilog-1995 compatibility
-        reg [7:0] temp_logic_x, temp_logic_y;
-        temp_logic_x = logic_x - x;
-        temp_logic_y = logic_y - y;
-
         if (!rst_n) begin
             pix_hit <= 1'b0;
         end else begin
             pix_hit <= 1'b0; // Default value for the cycle
             for (spr_idx = 0; spr_idx < MAX_SPRITES; spr_idx = spr_idx + 1) begin
+                // Read sprite attributes for this iteration
                 x             = active_obj_ram[spr_idx*OBJ_BYTES + 0];
                 y             = active_obj_ram[spr_idx*OBJ_BYTES + 1];
                 bitmap_offset = active_obj_ram[spr_idx*OBJ_BYTES + 2];
@@ -242,11 +223,13 @@ module tqvp_adder (
                 height        = size_byte[3:0] + 1;
 
                 if (visible && (logic_x >= x) && (logic_x < x + width) && (logic_y >= y) && (logic_y < y + height)) begin
-                    spr_x       = temp_logic_x[3:0];
-                    spr_y       = temp_logic_y[3:0];
-                    bit_offset  = spr_y * width + spr_x;
-                    byte_addr   = bitmap_offset + (bit_offset >> 3);
-                    bit_in_byte = bit_offset & 3'h7;
+                    temp_logic_x  = logic_x - x;
+                    temp_logic_y  = logic_y - y;
+                    spr_x         = temp_logic_x[3:0];
+                    spr_y         = temp_logic_y[3:0];
+                    bit_offset    = spr_y * width + spr_x;
+                    byte_addr     = bitmap_offset + (bit_offset >> 3);
+                    bit_in_byte   = bit_offset & 3'h7;
                     if ((byte_addr >= 0) && (byte_addr < BITMAP_BYTES)) begin
                         bmp_byte = bitmap_ram[byte_addr];
                         bmp_bit  = bmp_byte[bit_in_byte];
@@ -269,3 +252,4 @@ module tqvp_adder (
     assign uo_out = {1'b0, 1'b0, vsync, hsync, B, G, R};
     
 endmodule
+
