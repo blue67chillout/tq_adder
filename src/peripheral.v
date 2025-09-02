@@ -233,6 +233,10 @@ module tqvp_adder (
     assign B = sprite_pixel_on ? 2'b11 : bg_B;
 
     assign uo_out = {1'b0, 1'b0, vsync, hsync, B, G, R};
+
+    // Suppress unused warnings
+wire _unused = &{data_read_n, data_out, data_ready, 1'b0};
+
     
 endmodule
 
