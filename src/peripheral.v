@@ -186,7 +186,7 @@ module tqvp_adder (
     wire [7:0] logic_y = pix_y[9:2];
 
     always @(*) begin
-            pix_hit <= 1'b0; // Default value for the cycle
+            pix_hit = 1'b0; // Default value for the cycle
             for (spr_idx = 0; spr_idx < MAX_SPRITES; spr_idx = spr_idx + 1) begin
                 // Read sprite attributes for this iteration
                 x             = active_obj_ram[spr_idx*OBJ_BYTES + 0];
@@ -208,7 +208,7 @@ module tqvp_adder (
                         bmp_byte = bitmap_ram[byte_addr];
                         bmp_bit  = bmp_byte[bit_in_byte];
                         if(bmp_bit) begin
-                            pix_hit <= 1'b1;
+                            pix_hit = 1'b1;
                         end
                     end
                 end
