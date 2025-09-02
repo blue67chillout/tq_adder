@@ -40,7 +40,7 @@ module tqvp_adder (
         if (!rst_n) begin
             ctrl <= 0;
         end else begin
-            if (address == 6'h0 ) begin
+            if (address == 6'h50 ) begin
                 if (data_write_n != 2'b11)              ctrl[7:0]   <= data_in[7:0];
                 if (data_write_n[1] != data_write_n[0]) ctrl[15:8]  <= data_in[15:8];
                 if (data_write_n == 2'b10)              ctrl[31:16] <= data_in[31:16];
@@ -100,8 +100,8 @@ module tqvp_adder (
     assign data_ready = 1;
     
     // User interrupt is generated on rising edge of ui_in[6], and cleared by writing a 1 to the low bit of address 8.
-    reg example_interrupt;
-    reg last_ui_in_6;
+    // reg example_interrupt;
+    // reg last_ui_in_6;
 
     always @(posedge clk) begin
         if (!rst_n) begin
@@ -110,7 +110,7 @@ module tqvp_adder (
 
         if (ui_in[6] && !last_ui_in_6) begin
             example_interrupt <= 1;
-        end else if (address == 6'h8 && data_write_n != 2'b11 && data_in[0]) begin
+        end else if (address == 6'h40 && data_write_n != 2'b11 && data_in[0]) begin
             example_interrupt <= 0;
         end
 
@@ -118,6 +118,82 @@ module tqvp_adder (
     end
 
     assign user_interrupt = example_interrupt;
+
+    localparam MAX_SPRITES = 1;
+    localparam OBJ_BYTES     = 4;
+    localparam OBJ_REGION_SZ = OBJ_BYTES * MAX_SPRITES;
+    localparam BITMAP_BASE   = OBJ_REGION_SZ;
+    localparam BITMAP_BYTES  = 31 - OBJ_REGION_SZ;
+    localparam CONTROL_ADDR  = 32;
+
+    reg [7:0] active_obj_ram [0:OBJ_REGION_SZ - 1];
+    reg [7:0] stage_obj_ram  [0:OBJ_REGION_SZ - 1];
+    reg [7:0] bitmap_ram     [0:BITMAP_BYTES - 1];
+    reg [7:0] control_reg;
+
+        integer i;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            // reset memories & control
+            for (i = 0; i < OBJ_REGION_SZ; i = i + 1) begin
+                active_obj_ram[i] <= 8'b0;
+                stage_obj_ram[i]  <= 8'b0;
+            end
+            for (i = 0; i < BITMAP_BYTES; i = i + 1) begin
+                bitmap_ram[i] <= 8'b0;
+            end
+            control_reg <= 8'b0;
+        end else begin
+            // Host writes (synchronous)
+            if (data_write_n != 2'b11) begin
+                // compute write width and perform writes (byte/half/word) at address
+                // only perform writes if address and region valid and allowed by control_reg
+                if (data_write_n == 2'b00) begin
+                    // byte write
+                    if (address < OBJ_REGION_SZ) begin
+                        stage_obj_ram[address] <= data_in[7:0];
+                    end else if ((address >= BITMAP_BASE) && (address < BITMAP_BASE + BITMAP_BYTES)) begin
+                        if (control_reg[0]) // BITMAP_WRITE_EN
+                            bitmap_ram[address - BITMAP_BASE] <= data_in[7:0];
+                    end else if (address == CONTROL_ADDR) begin
+                        control_reg <= data_in[7:0];
+                    end
+                end else if (data_write_n == 2'b01) begin
+                    // halfword (16-bit) write - address must be <= 62
+                    if ((address + 1) < OBJ_REGION_SZ) begin
+                        stage_obj_ram[address]   <= data_in[7:0];
+                        stage_obj_ram[address+1] <= data_in[15:8];
+                    end else if ((address >= BITMAP_BASE) && ((address + 1) < BITMAP_BASE + BITMAP_BYTES)) begin
+                        if (control_reg[0]) begin
+                            bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
+                            bitmap_ram[address+1 - BITMAP_BASE] <= data_in[15:8];
+                        end
+                    end else if (address == CONTROL_ADDR - 1) begin
+                        // allow halfword write that ends at CONTROL_ADDR
+                        control_reg <= data_in[15:8];
+                    end
+                end else if (data_write_n == 2'b10) begin
+                    // word (32-bit) write - address must be <= 60
+                    if ((address + 3) < OBJ_REGION_SZ) begin
+                        stage_obj_ram[address]   <= data_in[7:0];
+                        stage_obj_ram[address+1] <= data_in[15:8];
+                        stage_obj_ram[address+2] <= data_in[23:16];
+                        stage_obj_ram[address+3] <= data_in[31:24];
+                    end else if ((address >= BITMAP_BASE) && ((address + 3) < BITMAP_BASE + BITMAP_BYTES)) begin
+                        if (control_reg[0]) begin
+                            bitmap_ram[address - BITMAP_BASE]     <= data_in[7:0];
+                            bitmap_ram[address+1 - BITMAP_BASE] <= data_in[15:8];
+                            bitmap_ram[address+2 - BITMAP_BASE] <= data_in[23:16];
+                            bitmap_ram[address+3 - BITMAP_BASE] <= data_in[31:24];
+                        end
+                    end else if (address == CONTROL_ADDR - 3) begin
+                        control_reg <= data_in[31:24];
+                    end
+                end
+            end
+            // Note: we keep reading/writing staging only. Active table is swapped later at vsync.
+        end
+    end
 
     // List all unused inputs to prevent warnings
     // data_read_n is unused as none of our behaviour depends on whether
