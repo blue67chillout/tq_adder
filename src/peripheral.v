@@ -63,7 +63,7 @@ module tqvp_adder (
     // --- Temporary variables for Verilog-1995 compatibility ---
     // FIX: All declarations moved here from inside always blocks.
    // reg [5:0] temp_addr_p1, temp_addr_p2, temp_addr_p3;
-    //reg [7:0] temp_logic_x, temp_logic_y;
+    reg [7:0] temp_logic_x, temp_logic_y;
 
 
     // --- Host Read/Write Interface ---
